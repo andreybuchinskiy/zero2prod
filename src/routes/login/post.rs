@@ -1,9 +1,10 @@
 use crate::authentication::{validate_credentials, AuthError, Credentials};
 use crate::routes::error_chain_fmt;
+use actix_web::error::InternalError;
 use actix_web::http::header::LOCATION;
-use actix_web::http::StatusCode;
+use actix_web::web;
 use actix_web::HttpResponse;
-use actix_web::{web, ResponseError};
+use actix_web_flash_messages::FlashMessage;
 use secrecy::Secret;
 use sqlx::PgPool;
 
@@ -21,19 +22,6 @@ impl std::fmt::Debug for LoginError {
     }
 }
 
-impl ResponseError for LoginError {
-    fn status_code(&self) -> StatusCode {
-        StatusCode::SEE_OTHER
-    }
-
-    fn error_response(&self) -> HttpResponse {
-        let encoded_error = urlencoding::Encoded::new(self.to_string());
-        HttpResponse::build(self.status_code())
-            .insert_header((LOCATION, format!("/login?error={}", encoded_error)))
-            .finish()
-    }
-}
-
 #[derive(serde::Deserialize)]
 pub struct FormData {
     username: String,
@@ -44,19 +32,29 @@ pub struct FormData {
 pub async fn login(
     form: web::Form<FormData>,
     pool: web::Data<PgPool>,
-) -> Result<HttpResponse, LoginError> {
+) -> Result<HttpResponse, InternalError<LoginError>> {
     let credentials = Credentials {
         username: form.0.username,
         password: form.0.password,
     };
-    let user_id = validate_credentials(credentials, &pool)
-        .await
-        .map_err(|e| match e {
-            AuthError::InvalidCredentials(_) => LoginError::AuthError(e.into()),
-            AuthError::UnexcpectedError(_) => LoginError::UnexpectedError(e.into()),
-        })?;
-    tracing::Span::current().record("user_id", &tracing::field::display(&user_id));
-    Ok(HttpResponse::SeeOther()
-        .insert_header((LOCATION, "/"))
-        .finish())
+
+    match validate_credentials(credentials, &pool).await {
+        Ok(user_id) => {
+            tracing::Span::current().record("user_id", &tracing::field::display(&user_id));
+            Ok(HttpResponse::SeeOther()
+                .insert_header((LOCATION, "/admin/dashboard"))
+                .finish())
+        }
+        Err(e) => {
+            let e = match e {
+                AuthError::InvalidCredentials(_) => LoginError::AuthError(e.into()),
+                AuthError::UnexcpectedError(_) => LoginError::UnexpectedError(e.into()),
+            };
+            FlashMessage::error(e.to_string()).send();
+            let response = HttpResponse::SeeOther()
+                .insert_header((LOCATION, "/login"))
+                .finish();
+            Err(InternalError::from_response(e, response))
+        }
+    }
 }

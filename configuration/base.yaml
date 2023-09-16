@@ -1,6 +1,7 @@
 application:
   port: 8000
   base_url: "http://127.0.0.1"
+  hmac_secret: "top-secret-key-very-secure-and-needs-to-bery-very-long-apparently"
 database:
   host: "localhost"
   port: 5432
@@ -12,3 +13,4 @@ email_client:
   sender_email: "test@gmail.com"
   authorization_token: "my-secret-token"
   timeout_milliseconds: 10000
+redis_uri: "redis://127.0.0.1:6379"
